@@ -358,6 +358,10 @@ async def cmd_profile(interaction: discord.Interaction, пользователь
     if not await utils.check_role_only(interaction, cfg):
         return
 
+    # Сразу подтверждаем команду, чтобы избежать "Приложение не отвечает"
+    # при медленном ответе API Stalcraft.
+    await interaction.response.defer(ephemeral=False)
+
     target = пользователь or interaction.user
     link = await db.get_game_link(target.id)
     game_info = None
@@ -369,4 +373,4 @@ async def cmd_profile(interaction: discord.Interaction, пользователь
     embed = await create_profile_embed(target, cfg, link, game_info)
     can_moderate = any(role.id in cfg.get('ALLOWED_ROLE_IDS', []) for role in interaction.user.roles)
     view = ProfileView(target, interaction.user, link, can_moderate, game_info, cfg)
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.followup.send(embed=embed, view=view)

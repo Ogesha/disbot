@@ -291,8 +291,7 @@ class BackupActionView(View):
 
     @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger)
     async def back(self, interaction: discord.Interaction, button: Button):
-        current_config = await db.get_server_config(interaction.guild_id)
-        print(f"DEBUG current_config: {current_config}")
+        current_config = await db.get_server_config(interaction.guild_id) or cfg
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -351,8 +350,7 @@ async def cmd_settings(interaction: discord.Interaction):
             return
 
         await interaction.response.defer(ephemeral=False)
-        current_config = await db.get_server_config(interaction.guild_id)
-        print(f"DEBUG current_config: {current_config}")
+        current_config = await db.get_server_config(interaction.guild_id) or cfg
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -362,4 +360,7 @@ async def cmd_settings(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, view=view)
     except Exception as e:
         print(f"❌ Ошибка в /settings: {type(e).__name__}: {e}")
-        await interaction.followup.send("Произошла внутренняя ошибка.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("Произошла внутренняя ошибка.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Произошла внутренняя ошибка.", ephemeral=True)

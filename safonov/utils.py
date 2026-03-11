@@ -179,11 +179,14 @@ def get_user_clans_by_high_roles(member: discord.Member, cfg) -> list:
 def is_member_of_clan(member: discord.Member, clan_name: str, cfg) -> bool:
     if clan_name == 'clan1':
         member_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN1_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)]
+        high_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN1_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)]
     elif clan_name == 'clan2':
         member_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN2_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)]
+        high_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN2_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)]
     else:
         return False
-    return any(role in member.roles for role in member_roles)
+    clan_roles = member_roles + high_roles
+    return any(role in member.roles for role in clan_roles)
 
 async def apply_clan_status(member: discord.Member, game_info, cfg, dry_run: bool = False) -> Tuple[List[str], List[tuple]]:
     """

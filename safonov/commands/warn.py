@@ -36,11 +36,9 @@ async def cmd_warn(interaction: discord.Interaction, пользователи: s
 
     # Отладка: определяем кланы инициатора
     initiator_clans = utils.get_user_clans_by_high_roles(interaction.user, cfg)
-    print(f"DEBUG: initiator clans: {initiator_clans}")
     if initiator_clans:
         for target in targets:
             member_of = [utils.is_member_of_clan(target, clan, cfg) for clan in initiator_clans]
-            print(f"DEBUG: target {target} member of {initiator_clans}: {member_of}")
             if not any(member_of):
                 await interaction.response.send_message(
                     f"Пользователь {target.mention} не является членом вашего клана.",
