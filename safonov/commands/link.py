@@ -1,0 +1,60 @@
+import discord
+from discord import app_commands
+from typing import Optional
+import config
+import utils
+import logger
+from db_client import db
+from stalcraft_client import stalcraft
+
+@app_commands.command(name="привязать", description="Привязать игровой ник к Discord (для себя или другого пользователя)")
+@app_commands.describe(
+    пользователь="Пользователь, которому привязываем (по умолчанию вы)",
+    ник="Ник в Stalcraft"
+)
+async def cmd_link(interaction: discord.Interaction, ник: str, пользователь: Optional[discord.Member] = None):
+    # Проверка канала – отдельный канал для привязки
+    if interaction.channel_id != config.LINK_COMMAND_CHANNEL_ID:
+        await interaction.response.send_message("Эта команда доступна только в специальном канале для привязки.", ephemeral=True)
+        return
+
+    # Проверка роли
+    if not await utils.check_role_only(interaction):
+        return
+
+    target = пользователь or interaction.user
+
+    await interaction.response.defer(ephemeral=True)
+    # Всегда используем регион RU
+    info = await stalcraft.get_player_info(ник, region="ru")
+    if not info:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description=f"Игрок с ником **{ник}** не найден в регионе RU.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Сохраняем привязку (регион всегда ru)
+    await db.add_game_link(target.id, ник, "ru")
+
+    # Немедленно применяем логику клана на основе полученных данных
+    changes = await utils.apply_clan_status(target, info, soft=False)
+    if changes:
+        embed_log = discord.Embed(
+            title="📌 Обновление после привязки",
+            description="\n".join(changes),
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow()
+        )
+        await utils.send_user_log(interaction.guild, embed_log, channel_id=config.MEMBER_CHANGE_LOG_CHANNEL_ID)
+
+    embed = discord.Embed(
+        title="✅ Привязка успешна",
+        description=f"Пользователь {target.mention} теперь привязан к игроку **{ник}** (регион RU).",
+        color=discord.Color.green()
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    logger.send_tg_log(f"🔗 {interaction.user} {'привязал' if target.id == interaction.user.id else f'привязал для {target}'} ник {ник} (регион ru)")
