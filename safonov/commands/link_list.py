@@ -101,12 +101,16 @@ async def cmd_link_list(interaction: discord.Interaction, роль: Optional[dis
 
     embed.add_field(name="📊 Статистика", value=stats, inline=False)
 
-    # Добавляем поля с пользователями
-    for member_name, row, role_info in filtered_display:
+    # Добавляем поля с пользователями (лимит Discord: максимум 25 полей в embed)
+    max_user_fields = 24
+    for member_name, row, role_info in filtered_display[:max_user_fields]:
         updated = row['last_updated'].strftime("%d.%m.%Y %H:%M")
         value = f"Ник: {row['game_nick']} (регион {row['region'].upper()})\nОбновлено: {updated}"
         if role_info:
             value += f"\nРоль: {role_info}"
         embed.add_field(name=member_name, value=value, inline=False)
+
+    if len(filtered_display) > max_user_fields:
+        embed.set_footer(text=f"Показано {max_user_fields} из {len(filtered_display)} записей. Уточните фильтр роли для полного списка.")
 
     await interaction.followup.send(embed=embed)

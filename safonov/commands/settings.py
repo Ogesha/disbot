@@ -18,7 +18,6 @@ class GeneralSettingsModal(Modal, title="Общие настройки"):
     command_channels = TextInput(label="ID каналов команд (через запятую)", required=False)
     fine_expire_days = TextInput(label="Дней до первого варна за неуплату", required=False)
     punishment_expire_days = TextInput(label="Дней до автоснятия наказания", required=False)
-    reminder_interval = TextInput(label="Интервал напоминаний (часы)", required=False)
 
     def __init__(self, current_config: dict):
         super().__init__()
@@ -28,7 +27,6 @@ class GeneralSettingsModal(Modal, title="Общие настройки"):
         self.command_channels.default = ','.join(str(x) for x in current_config.get('COMMAND_CHANNEL_IDS', []))
         self.fine_expire_days.default = str(current_config.get('FINE_EXPIRE_DAYS', 7))
         self.punishment_expire_days.default = str(current_config.get('PUNISHMENT_EXPIRE_DAYS', 14))
-        self.reminder_interval.default = str(current_config.get('REMINDER_INTERVAL_HOURS', 48))
 
     async def on_submit(self, interaction: discord.Interaction):
         new_config = self.current_config.copy()
@@ -43,8 +41,6 @@ class GeneralSettingsModal(Modal, title="Общие настройки"):
                 new_config['FINE_EXPIRE_DAYS'] = int(self.fine_expire_days.value)
             if self.punishment_expire_days.value:
                 new_config['PUNISHMENT_EXPIRE_DAYS'] = int(self.punishment_expire_days.value)
-            if self.reminder_interval.value:
-                new_config['REMINDER_INTERVAL_HOURS'] = int(self.reminder_interval.value)
         except ValueError:
             await interaction.response.send_message("Неверный формат числа. Проверьте ввод.", ephemeral=True)
             return
@@ -96,8 +92,6 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
     ex_role_ids = TextInput(label="ID ролей бывших (через запятую)", required=False)
     high_role_ids = TextInput(label="ID высоких ролей (через запятую)", required=False)
     nick_prefix = TextInput(label="Префикс члена", required=False)
-    ex_nick_prefix = TextInput(label="Префикс бывшего", required=False)
-    command_channel = TextInput(label="ID канала для команд наказаний", required=False)
 
     def __init__(self, current_config: dict):
         super().__init__()
@@ -107,8 +101,6 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
         self.ex_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN1_EX_MEMBER_ROLE_IDS', []))
         self.high_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN1_HIGH_RANK_ROLE_IDS', []))
         self.nick_prefix.default = current_config.get('CLAN1_NICK_PREFIX', '[АЛЬЦ]')
-        self.ex_nick_prefix.default = current_config.get('CLAN1_EX_NICK_PREFIX', '[Друг]')
-        self.command_channel.default = str(current_config.get('CLAN1_COMMAND_CHANNEL_ID', ''))
 
     async def on_submit(self, interaction: discord.Interaction):
         new_config = self.current_config.copy()
@@ -120,13 +112,10 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
                 new_config['CLAN1_EX_MEMBER_ROLE_IDS'] = [int(x.strip()) for x in self.ex_role_ids.value.split(',') if x.strip()]
             if self.high_role_ids.value:
                 new_config['CLAN1_HIGH_RANK_ROLE_IDS'] = [int(x.strip()) for x in self.high_role_ids.value.split(',') if x.strip()]
-            if self.command_channel.value:
-                new_config['CLAN1_COMMAND_CHANNEL_ID'] = int(self.command_channel.value)
         except ValueError:
             await interaction.response.send_message("ID должны быть числами, разделёнными запятыми.", ephemeral=True)
             return
         new_config['CLAN1_NICK_PREFIX'] = self.nick_prefix.value or ''
-        new_config['CLAN1_EX_NICK_PREFIX'] = self.ex_nick_prefix.value or ''
 
         await db.save_server_config(interaction.guild_id, new_config)
         await config_manager.update_config(interaction.guild_id, new_config)
@@ -140,8 +129,6 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
     ex_role_ids = TextInput(label="ID ролей бывших (через запятую)", required=False)
     high_role_ids = TextInput(label="ID высоких ролей (через запятую)", required=False)
     nick_prefix = TextInput(label="Префикс члена", required=False)
-    ex_nick_prefix = TextInput(label="Префикс бывшего", required=False)
-    command_channel = TextInput(label="ID канала для команд наказаний", required=False)
 
     def __init__(self, current_config: dict):
         super().__init__()
@@ -151,8 +138,6 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
         self.ex_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN2_EX_MEMBER_ROLE_IDS', []))
         self.high_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN2_HIGH_RANK_ROLE_IDS', []))
         self.nick_prefix.default = current_config.get('CLAN2_NICK_PREFIX', '')
-        self.ex_nick_prefix.default = current_config.get('CLAN2_EX_NICK_PREFIX', '')
-        self.command_channel.default = str(current_config.get('CLAN2_COMMAND_CHANNEL_ID', ''))
 
     async def on_submit(self, interaction: discord.Interaction):
         new_config = self.current_config.copy()
@@ -164,13 +149,10 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
                 new_config['CLAN2_EX_MEMBER_ROLE_IDS'] = [int(x.strip()) for x in self.ex_role_ids.value.split(',') if x.strip()]
             if self.high_role_ids.value:
                 new_config['CLAN2_HIGH_RANK_ROLE_IDS'] = [int(x.strip()) for x in self.high_role_ids.value.split(',') if x.strip()]
-            if self.command_channel.value:
-                new_config['CLAN2_COMMAND_CHANNEL_ID'] = int(self.command_channel.value)
         except ValueError:
             await interaction.response.send_message("ID должны быть числами, разделёнными запятыми.", ephemeral=True)
             return
         new_config['CLAN2_NICK_PREFIX'] = self.nick_prefix.value or ''
-        new_config['CLAN2_EX_NICK_PREFIX'] = self.ex_nick_prefix.value or ''
 
         await db.save_server_config(interaction.guild_id, new_config)
         await config_manager.update_config(interaction.guild_id, new_config)
@@ -291,7 +273,10 @@ class BackupActionView(View):
 
     @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger)
     async def back(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
         current_config = await db.get_server_config(interaction.guild_id) or cfg
+        if not isinstance(current_config, dict):
+            current_config = cfg
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -351,6 +336,8 @@ async def cmd_settings(interaction: discord.Interaction):
 
         await interaction.response.defer(ephemeral=False)
         current_config = await db.get_server_config(interaction.guild_id) or cfg
+        if not isinstance(current_config, dict):
+            current_config = cfg
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",

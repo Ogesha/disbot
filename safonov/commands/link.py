@@ -1,11 +1,11 @@
 import discord
 from discord import app_commands
 from typing import Optional
-import config
 import utils
 import logger
 from db_client import db
 from stalcraft_client import stalcraft
+from config_manager import config_manager
 
 @app_commands.command(name="привязать", description="Привязать игровой ник к Discord (для себя или другого пользователя)")
 @app_commands.describe(
@@ -13,19 +13,18 @@ from stalcraft_client import stalcraft
     ник="Ник в Stalcraft"
 )
 async def cmd_link(interaction: discord.Interaction, ник: str, пользователь: Optional[discord.Member] = None):
-    # Проверка канала – отдельный канал для привязки
-    if interaction.channel_id != config.LINK_COMMAND_CHANNEL_ID:
+    cfg = await config_manager.get_config(interaction.guild_id)
+
+    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
         await interaction.response.send_message("Эта команда доступна только в специальном канале для привязки.", ephemeral=True)
         return
 
-    # Проверка роли
-    if not await utils.check_role_only(interaction):
+    if not await utils.check_role_only(interaction, cfg):
         return
 
     target = пользователь or interaction.user
 
     await interaction.response.defer(ephemeral=True)
-    # Всегда используем регион RU
     info = await stalcraft.get_player_info(ник, region="ru")
     if not info:
         embed = discord.Embed(
@@ -36,11 +35,9 @@ async def cmd_link(interaction: discord.Interaction, ник: str, пользов
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Сохраняем привязку (регион всегда ru)
     await db.add_game_link(target.id, ник, "ru")
 
-    # Немедленно применяем логику клана на основе полученных данных
-    changes = await utils.apply_clan_status(target, info, soft=False)
+    changes, _ = await utils.apply_clan_status(target, info, cfg, dry_run=False)
     if changes:
         embed_log = discord.Embed(
             title="📌 Обновление после привязки",
@@ -48,7 +45,7 @@ async def cmd_link(interaction: discord.Interaction, ник: str, пользов
             color=discord.Color.blue(),
             timestamp=discord.utils.utcnow()
         )
-        await utils.send_user_log(interaction.guild, embed_log, channel_id=config.MEMBER_CHANGE_LOG_CHANNEL_ID)
+        await utils.send_user_log(interaction.guild, embed_log, channel_id=cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
 
     embed = discord.Embed(
         title="✅ Привязка успешна",

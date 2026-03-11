@@ -130,7 +130,7 @@ class UnlinkButton(Button):
         await db.remove_game_link(self.user_id)
 
         # При удалении привязки вызываем мягкий режим (только клановые роли)
-        changes = await utils.apply_clan_status(member, {'clan': None}, self.cfg)
+        changes, _ = await utils.apply_clan_status(member, {'clan': None}, self.cfg, dry_run=False)
 
         embed = discord.Embed(title="✅ Привязка удалена", color=discord.Color.green())
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -162,7 +162,7 @@ class RefreshButton(Button):
             if info:
                 new_game_info = info
                 # Жёсткий режим при ручном обновлении (полный сброс)
-                changes = await utils.apply_clan_status(self.target_user, new_game_info, self.cfg)
+                changes, _ = await utils.apply_clan_status(self.target_user, new_game_info, self.cfg, dry_run=False)
                 if changes:
                     embed_log = discord.Embed(
                         title="🔄 Ручное обновление профиля",
@@ -286,7 +286,7 @@ class LinkModal(Modal, title="Привязка игрового аккаунта
         member = interaction.guild.get_member(self.user_id)
         if member:
             # Жёсткий режим при привязке (полный сброс, как при ручном обновлении)
-            changes = await utils.apply_clan_status(member, info, self.cfg)
+            changes, _ = await utils.apply_clan_status(member, info, self.cfg, dry_run=False)
             if changes:
                 embed_log = discord.Embed(
                     title="📌 Обновление после привязки",
