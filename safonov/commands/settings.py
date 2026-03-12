@@ -88,6 +88,81 @@ class CommandRoleSelect(discord.ui.RoleSelect):
         await self.parent_view.refresh_message(interaction)
 
 
+class NewMemberRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, parent_view: 'NewMemberRoleSettingsView'):
+        super().__init__(
+            placeholder="Выберите роль для новых пользователей",
+            min_values=0,
+            max_values=1
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.new_member_role_id = self.values[0].id if self.values else None
+        await self.parent_view.refresh_message(interaction)
+
+
+class NewMemberRoleSettingsView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        value = current_config.get('NEW_MEMBER_RESTRICTED_ROLE_ID')
+        self.new_member_role_id = int(value) if str(value).isdigit() and int(value) > 0 else None
+
+        self.role_select = NewMemberRoleSelect(self)
+        self.add_item(self.role_select)
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🆕 Роль для новых пользователей", color=discord.Color.blurple())
+        if self.new_member_role_id:
+            role = guild.get_role(self.new_member_role_id)
+            role_text = role.mention if role else f"`{self.new_member_role_id}`"
+        else:
+            role_text = "Не выбрана"
+        embed.add_field(name="Текущая роль", value=role_text, inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=2)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.current_config['NEW_MEMBER_RESTRICTED_ROLE_ID'] = self.new_member_role_id
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил роль для новых пользователей")
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить", style=discord.ButtonStyle.secondary, row=2)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.new_member_role_id = None
+        self.current_config['NEW_MEMBER_RESTRICTED_ROLE_ID'] = None
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Роль очищена")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=2)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id)
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
 class CommandAccessView(View):
     def __init__(self, current_config: dict):
         super().__init__(timeout=300)
@@ -412,6 +487,12 @@ class SettingsView(View):
     @discord.ui.button(label="Доступ команд", style=discord.ButtonStyle.secondary)
     async def command_access_button(self, interaction: discord.Interaction, button: Button):
         view = CommandAccessView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Новые пользователи", style=discord.ButtonStyle.secondary)
+    async def new_member_role_button(self, interaction: discord.Interaction, button: Button):
+        view = NewMemberRoleSettingsView(self.current_config)
         embed = view._create_embed(interaction.guild)
         await interaction.response.edit_message(embed=embed, view=view)
 

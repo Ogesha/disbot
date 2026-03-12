@@ -40,6 +40,18 @@ intents.moderation = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
+
+@tree.interaction_check
+async def no_dm_commands(interaction: discord.Interaction) -> bool:
+    """Запрещаем использовать slash-команды в ЛС с ботом."""
+    if interaction.guild is None:
+        if interaction.response.is_done():
+            await interaction.followup.send("Эти команды доступны только на сервере.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Эти команды доступны только на сервере.", ephemeral=True)
+        return False
+    return True
+
 # Глобальные переменные
 antinuke = None
 backup_manager = None
