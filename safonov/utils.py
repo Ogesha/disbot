@@ -15,7 +15,9 @@ def _normalize_ids(values) -> List[int]:
     normalized = []
     for value in values:
         try:
-            normalized.append(int(value))
+            int_value = int(value)
+            if int_value > 0:
+                normalized.append(int_value)
         except (TypeError, ValueError):
             continue
     return normalized
@@ -51,7 +53,11 @@ def get_command_log_channel_id(cfg, command_name: str, fallback_key: str = None)
     command_data = access_map.get(command_name, {}) if isinstance(access_map, dict) else {}
     value = command_data.get('log_channel_id')
     try:
-        return int(value) if value else (cfg.get(fallback_key) if fallback_key else None)
+        if value:
+            iv = int(value)
+            if iv > 0:
+                return iv
+        return cfg.get(fallback_key) if fallback_key else None
     except (TypeError, ValueError):
         return cfg.get(fallback_key) if fallback_key else None
 
