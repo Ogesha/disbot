@@ -17,7 +17,7 @@ async def cmd_link_list(interaction: discord.Interaction, роль: Optional[dis
         await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="linklist"):
         return
 
     await interaction.response.defer(ephemeral=False)

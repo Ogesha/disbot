@@ -12,7 +12,7 @@ async def cmd_pay(interaction: discord.Interaction, пользователь: di
     # Получаем конфиг гильдии
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="оплата"):
         return
 
     fines = await db.get_active_fines(пользователь.id)

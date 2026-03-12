@@ -22,7 +22,7 @@ async def cmd_edit_fine(interaction: discord.Interaction, id: int,
                         новая_сумма: Optional[str] = None, новая_причина: Optional[str] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="редактировать_штраф"):
         return
 
     if not (новая_сумма or новая_причина):

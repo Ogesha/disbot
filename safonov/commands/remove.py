@@ -55,7 +55,7 @@ async def cmd_remove(interaction: discord.Interaction, пользователь:
     cfg = await config_manager.get_config(interaction.guild_id)
 
     # Проверяем, что команда вызвана в одном из клановых каналов
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="снять"):
         return
 
     if тип == 'warn':

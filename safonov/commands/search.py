@@ -23,7 +23,7 @@ async def cmd_search(interaction: discord.Interaction, ник: str, регион
         return
 
     # Проверка прав (роль из ALLOWED_ROLE_IDS) – используем cfg
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="поиск"):
         return
 
     await interaction.response.defer()

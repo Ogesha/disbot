@@ -12,7 +12,7 @@ async def cmd_list(interaction: discord.Interaction, пользователь: O
     cfg = await config_manager.get_config(interaction.guild_id)
 
     # Проверяем, что команда вызвана в одном из клановых каналов
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="список"):
         return
 
     target = пользователь or interaction.user

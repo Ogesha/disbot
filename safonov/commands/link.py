@@ -20,7 +20,7 @@ async def cmd_link(interaction: discord.Interaction, ник: str, пользов
         await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="привязать"):
         return
 
     target = пользователь or interaction.user

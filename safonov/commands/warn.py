@@ -20,7 +20,7 @@ REASON_CHOICES = [
 async def cmd_warn(interaction: discord.Interaction, пользователи: str, причина: str):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="варн"):
         return
 
     targets = await utils.parse_members(interaction.guild, пользователи)

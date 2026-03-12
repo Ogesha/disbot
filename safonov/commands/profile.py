@@ -214,7 +214,7 @@ class RemovePunishmentModal(Modal, title="Снять наказание"):
         self.cfg = cfg
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not await utils.check_permissions(interaction, self.cfg):
+        if not await utils.check_permissions(interaction, self.cfg, command_name="профиль"):
             return
         try:
             pid = int(self.punishment_id.value)
@@ -243,7 +243,7 @@ class RemovePunishmentButton(Button):
         self.cfg = cfg
 
     async def callback(self, interaction: discord.Interaction):
-        if not await utils.check_permissions(interaction, self.cfg):
+        if not await utils.check_permissions(interaction, self.cfg, command_name="профиль"):
             return
         await interaction.response.send_modal(RemovePunishmentModal(self.target_user_id, self.cfg))
 
@@ -355,7 +355,7 @@ async def cmd_profile(interaction: discord.Interaction, пользователь
         await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="профиль"):
         return
 
     # Сразу подтверждаем команду, чтобы избежать "Приложение не отвечает"

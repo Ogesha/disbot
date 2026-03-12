@@ -22,7 +22,7 @@ FINE_AMOUNTS = ["300.000", "500.000"]
 async def cmd_fine(interaction: discord.Interaction, пользователи: str, сумма: str, причина: str):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    if not await utils.check_permissions(interaction, cfg):
+    if not await utils.check_permissions(interaction, cfg, command_name="штраф"):
         return
 
     targets = await utils.parse_members(interaction.guild, пользователи)
