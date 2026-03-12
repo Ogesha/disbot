@@ -27,6 +27,15 @@ COMMAND_ACCESS_OPTIONS = [
 ]
 
 
+def _cfg_to_dict(cfg_obj):
+    if isinstance(cfg_obj, dict):
+        return dict(cfg_obj)
+    data = getattr(cfg_obj, 'data', None)
+    if isinstance(data, dict):
+        return dict(data)
+    return {}
+
+
 class CommandSelect(Select):
     def __init__(self, parent_view: 'CommandAccessView'):
         options = [discord.SelectOption(label=label, value=value) for value, label in COMMAND_ACCESS_OPTIONS]
@@ -168,9 +177,9 @@ class CommandAccessView(View):
     @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=3)
     async def back_button(self, interaction: discord.Interaction, button: Button):
         cfg = await config_manager.get_config(interaction.guild_id)
-        current_config = await db.get_server_config(interaction.guild_id) or cfg
+        current_config = await db.get_server_config(interaction.guild_id)
         if not isinstance(current_config, dict):
-            current_config = cfg
+            current_config = _cfg_to_dict(cfg)
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -371,9 +380,9 @@ class BackupActionView(View):
     @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger)
     async def back(self, interaction: discord.Interaction, button: Button):
         cfg = await config_manager.get_config(interaction.guild_id)
-        current_config = await db.get_server_config(interaction.guild_id) or cfg
+        current_config = await db.get_server_config(interaction.guild_id)
         if not isinstance(current_config, dict):
-            current_config = cfg
+            current_config = _cfg_to_dict(cfg)
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -431,9 +440,9 @@ async def cmd_settings(interaction: discord.Interaction):
             return
 
         await interaction.response.defer(ephemeral=False)
-        current_config = await db.get_server_config(interaction.guild_id) or cfg
+        current_config = await db.get_server_config(interaction.guild_id)
         if not isinstance(current_config, dict):
-            current_config = cfg
+            current_config = _cfg_to_dict(cfg)
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
