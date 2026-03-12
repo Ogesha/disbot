@@ -102,6 +102,82 @@ class NewMemberRoleSelect(discord.ui.RoleSelect):
         await self.parent_view.refresh_message(interaction)
 
 
+class AutoClanCheckLogChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent_view: 'AutoClanCheckLogSettingsView'):
+        super().__init__(
+            placeholder="Выберите канал логов автопроверки",
+            min_values=0,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum],
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.log_channel_id = self.values[0].id if self.values else None
+        await self.parent_view.refresh_message(interaction)
+
+
+class AutoClanCheckLogSettingsView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        value = current_config.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID')
+        self.log_channel_id = int(value) if str(value).isdigit() and int(value) > 0 else None
+
+        self.channel_select = AutoClanCheckLogChannelSelect(self)
+        self.add_item(self.channel_select)
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🧾 Логи автопроверки кланов", color=discord.Color.blurple())
+        if self.log_channel_id:
+            channel = guild.get_channel(self.log_channel_id)
+            channel_text = channel.mention if channel else f"`{self.log_channel_id}`"
+        else:
+            channel_text = "Не выбран"
+        embed.add_field(name="Канал логов", value=channel_text, inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=2)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.current_config['AUTO_CLAN_CHECK_LOG_CHANNEL_ID'] = self.log_channel_id
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил канал логов автопроверки")
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить", style=discord.ButtonStyle.secondary, row=2)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.log_channel_id = None
+        self.current_config['AUTO_CLAN_CHECK_LOG_CHANNEL_ID'] = None
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Канал очищен")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=2)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id)
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
 class NewMemberRoleSettingsView(View):
     def __init__(self, current_config: dict):
         super().__init__(timeout=300)
@@ -493,6 +569,12 @@ class SettingsView(View):
     @discord.ui.button(label="Новые пользователи", style=discord.ButtonStyle.secondary)
     async def new_member_role_button(self, interaction: discord.Interaction, button: Button):
         view = NewMemberRoleSettingsView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Логи автопроверки", style=discord.ButtonStyle.secondary)
+    async def auto_clan_check_log_button(self, interaction: discord.Interaction, button: Button):
+        view = AutoClanCheckLogSettingsView(self.current_config)
         embed = view._create_embed(interaction.guild)
         await interaction.response.edit_message(embed=embed, view=view)
 

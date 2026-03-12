@@ -316,7 +316,7 @@ async def clan_check_loop():
             all_actions.extend(actions)
 
         if all_text_changes:
-            log_channel_id = cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID')
+            log_channel_id = cfg.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID') or cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID')
             pending_clan_changes[guild.id] = {
                 'text_changes': all_text_changes,
                 'actions': all_actions,
@@ -332,7 +332,7 @@ async def clan_check_loop():
             embed.set_footer(text="Нажмите Подтвердить, чтобы применить изменения, или Отмена для отмены.")
 
             view = ConfirmClanChangesView(guild.id)
-            log_channel = guild.get_channel(cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
+            log_channel = guild.get_channel(cfg.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID') or cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
             if log_channel:
                 msg = await log_channel.send(embed=embed, view=view)
                 view.message = msg
