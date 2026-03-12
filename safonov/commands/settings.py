@@ -596,6 +596,10 @@ class SettingsView(View):
 @app_commands.command(name="settings", description="Настройка параметров бота (доступно в канале профиля)")
 async def cmd_settings(interaction: discord.Interaction):
     try:
+        if interaction.guild is None:
+            await interaction.response.send_message("Эта команда доступна только на сервере.", ephemeral=True)
+            return
+
         cfg = await config_manager.get_config(interaction.guild_id)
         allowed_channels, _ = utils.get_command_access(cfg, 'settings')
         if allowed_channels and interaction.channel_id not in allowed_channels:
