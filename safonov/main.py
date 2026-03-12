@@ -376,6 +376,11 @@ async def before_backup():
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    # Бот не обрабатывает личные сообщения
+    if message.guild is None:
+        return
+
     await db.update_user_last_seen(message.author.id, message.author.display_name)
     if config.MODERATION_ENABLED:
         cfg = await config_manager.get_config(message.guild.id)
