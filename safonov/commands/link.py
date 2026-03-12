@@ -46,7 +46,8 @@ async def cmd_link(interaction: discord.Interaction, ник: str, пользов
             color=discord.Color.blue(),
             timestamp=discord.utils.utcnow()
         )
-        await utils.send_user_log(interaction.guild, embed_log, channel_id=cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
+        log_channel_id = utils.get_command_log_channel_id(cfg, 'привязать', fallback_key='MEMBER_CHANGE_LOG_CHANNEL_ID')
+        await utils.send_user_log(interaction.guild, embed_log, channel_id=log_channel_id)
 
     embed = discord.Embed(
         title="✅ Привязка успешна",

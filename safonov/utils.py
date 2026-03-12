@@ -44,6 +44,17 @@ def get_command_access(cfg, command_name: str) -> Tuple[List[int], List[int]]:
 
     return channel_ids, role_ids
 
+
+def get_command_log_channel_id(cfg, command_name: str, fallback_key: str = None):
+    command_name = (command_name or '').lower()
+    access_map = cfg.get('COMMAND_ACCESS', {}) or {}
+    command_data = access_map.get(command_name, {}) if isinstance(access_map, dict) else {}
+    value = command_data.get('log_channel_id')
+    try:
+        return int(value) if value else (cfg.get(fallback_key) if fallback_key else None)
+    except (TypeError, ValueError):
+        return cfg.get(fallback_key) if fallback_key else None
+
 def create_message_link(guild_id: int, channel_id: int, message_id: int) -> str:
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
 
