@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
 import json
 import os
 import datetime
@@ -10,6 +10,147 @@ import logger
 from db_client import db
 from backup import backup_manager
 from config_manager import config_manager
+
+
+COMMAND_ACCESS_OPTIONS = [
+    ("settings", "⚙️ settings"),
+    ("профиль", "👤 профиль"),
+    ("привязать", "🔗 привязать"),
+    ("linklist", "📋 linklist"),
+    ("поиск", "🔎 поиск"),
+    ("штраф", "💸 штраф"),
+    ("варн", "⚠️ варн"),
+    ("оплата", "💰 оплата"),
+    ("снять", "🧹 снять"),
+    ("список", "📄 список"),
+    ("редактировать_штраф", "✏️ редактировать_штраф"),
+]
+
+
+class CommandSelect(Select):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        options = [discord.SelectOption(label=label, value=value) for value, label in COMMAND_ACCESS_OPTIONS]
+        super().__init__(placeholder="Выберите команду", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.selected_command = self.values[0]
+        self.parent_view._load_selected_command()
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        super().__init__(
+            placeholder="Выберите каналы для команды",
+            min_values=0,
+            max_values=10,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum],
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.channel_ids = [channel.id for channel in self.values]
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        super().__init__(placeholder="Выберите роли для команды", min_values=0, max_values=10)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.role_ids = [role.id for role in self.values]
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandAccessView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        self.command_access = dict(current_config.get('COMMAND_ACCESS', {}) or {})
+        self.selected_command = COMMAND_ACCESS_OPTIONS[0][0]
+        self.channel_ids = []
+        self.role_ids = []
+
+        self.command_select = CommandSelect(self)
+        self.channel_select = CommandChannelSelect(self)
+        self.role_select = CommandRoleSelect(self)
+
+        self.add_item(self.command_select)
+        self.add_item(self.channel_select)
+        self.add_item(self.role_select)
+
+        self._load_selected_command()
+
+    def _load_selected_command(self):
+        data = self.command_access.get(self.selected_command, {}) if isinstance(self.command_access, dict) else {}
+        self.channel_ids = [int(x) for x in data.get('channel_ids', []) if str(x).isdigit()]
+        self.role_ids = [int(x) for x in data.get('role_ids', []) if str(x).isdigit()]
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🎛️ Доступ к командам", color=discord.Color.blurple())
+        embed.description = "Выберите команду, затем каналы и роли через выпадающие списки."
+
+        channel_mentions = []
+        for cid in self.channel_ids:
+            channel = guild.get_channel(cid)
+            channel_mentions.append(channel.mention if channel else f"`{cid}`")
+
+        role_mentions = []
+        for rid in self.role_ids:
+            role = guild.get_role(rid)
+            role_mentions.append(role.mention if role else f"`{rid}`")
+
+        embed.add_field(name="Команда", value=f"`/{self.selected_command}`", inline=False)
+        embed.add_field(name="Каналы", value='\n'.join(channel_mentions) if channel_mentions else "Не выбраны", inline=False)
+        embed.add_field(name="Роли", value='\n'.join(role_mentions) if role_mentions else "Не выбраны (доступ всем)", inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=3)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        self.command_access[self.selected_command] = {
+            'channel_ids': self.channel_ids,
+            'role_ids': self.role_ids,
+        }
+        self.current_config['COMMAND_ACCESS'] = self.command_access
+        await db.save_server_config(interaction.guild_id, self.current_config)
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил доступ команды /{self.selected_command}")
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить для команды", style=discord.ButtonStyle.secondary, row=3)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        self.command_access[self.selected_command] = {'channel_ids': [], 'role_ids': []}
+        self.current_config['COMMAND_ACCESS'] = self.command_access
+        self.channel_ids = []
+        self.role_ids = []
+        await db.save_server_config(interaction.guild_id, self.current_config)
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Настройки команды очищены")
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=3)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id) or cfg
+        if not isinstance(current_config, dict):
+            current_config = cfg
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
 
 # ---------- Модальные окна ----------
 class GeneralSettingsModal(Modal, title="Общие настройки"):
@@ -311,6 +452,12 @@ class SettingsView(View):
     async def antinuke_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(AntiNukeSettingsModal(self.current_config))
 
+    @discord.ui.button(label="Доступ команд", style=discord.ButtonStyle.secondary)
+    async def command_access_button(self, interaction: discord.Interaction, button: Button):
+        view = CommandAccessView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
+
     @discord.ui.button(label="Бэкапы", style=discord.ButtonStyle.success)
     async def backup_button(self, interaction: discord.Interaction, button: Button):
         view = BackupActionView()
@@ -330,8 +477,9 @@ class SettingsView(View):
 async def cmd_settings(interaction: discord.Interaction):
     try:
         cfg = await config_manager.get_config(interaction.guild_id)
-        if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-            await interaction.response.send_message("Эта команда доступна только в канале профиля.", ephemeral=True)
+        allowed_channels, _ = utils.get_command_access(cfg, 'settings')
+        if allowed_channels and interaction.channel_id not in allowed_channels:
+            await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False)

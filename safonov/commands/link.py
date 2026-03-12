@@ -15,8 +15,9 @@ from config_manager import config_manager
 async def cmd_link(interaction: discord.Interaction, ник: str, пользователь: Optional[discord.Member] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-        await interaction.response.send_message("Эта команда доступна только в специальном канале для привязки.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'привязать')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
     if not await utils.check_role_only(interaction, cfg):

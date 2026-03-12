@@ -12,9 +12,9 @@ from config_manager import config_manager
 async def cmd_link_list(interaction: discord.Interaction, роль: Optional[discord.Role] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверка канала (LINK_CHANNEL_ID)
-    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-        await interaction.response.send_message("Эта команда доступна только в специальном канале для управления привязкой.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'linklist')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
     if not await utils.check_role_only(interaction, cfg):

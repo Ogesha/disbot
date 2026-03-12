@@ -6,6 +6,43 @@ from datetime import timezone
 from typing import List, Tuple
 import logger
 from db_client import db
+from config_manager import config_manager
+
+
+def _normalize_ids(values) -> List[int]:
+    if not values:
+        return []
+    normalized = []
+    for value in values:
+        try:
+            normalized.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def get_command_access(cfg, command_name: str) -> Tuple[List[int], List[int]]:
+    command_name = (command_name or '').lower()
+    access_map = cfg.get('COMMAND_ACCESS', {}) or {}
+    command_data = access_map.get(command_name, {}) if isinstance(access_map, dict) else {}
+
+    channel_ids = _normalize_ids(command_data.get('channel_ids', []))
+    role_ids = _normalize_ids(command_data.get('role_ids', []))
+
+    if not channel_ids:
+        if command_name in {'штраф', 'варн', 'оплата', 'снять', 'список', 'редактировать_штраф'}:
+            channel_ids = _normalize_ids([cfg.get('CLAN1_COMMAND_CHANNEL_ID'), cfg.get('CLAN2_COMMAND_CHANNEL_ID')])
+        elif command_name in {'профиль', 'привязать', 'linklist', 'settings', 'unlink', 'изменить'}:
+            channel_ids = _normalize_ids([cfg.get('LINK_CHANNEL_ID')])
+        elif command_name in {'поиск'}:
+            channel_ids = _normalize_ids([cfg.get('SEARCH_CHANNEL_ID')])
+        else:
+            channel_ids = _normalize_ids(cfg.get('COMMAND_CHANNEL_IDS', []))
+
+    if not role_ids:
+        role_ids = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
+    return channel_ids, role_ids
 
 def create_message_link(guild_id: int, channel_id: int, message_id: int) -> str:
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
@@ -32,16 +69,23 @@ async def parse_members(guild: discord.Guild, members_str: str) -> List[discord.
             members.append(member)
     return members
 
-async def check_permissions(interaction: discord.Interaction, cfg, clan_channel_id: int = None) -> bool:
-    if clan_channel_id is not None:
-        if interaction.channel_id != clan_channel_id:
-            await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
-            return False
+async def check_permissions(interaction: discord.Interaction, cfg=None, clan_channel_id: int = None, command_name: str = None) -> bool:
+    if cfg is None:
+        cfg = await config_manager.get_config(interaction.guild_id)
+
+    resolved_command_name = command_name or (interaction.command.name if interaction.command else '')
+    if resolved_command_name:
+        allowed_channels, allowed_roles = get_command_access(cfg, resolved_command_name)
     else:
-        allowed_channels = cfg.get('COMMAND_CHANNEL_IDS', [])
-        if interaction.channel_id not in allowed_channels:
-            await interaction.response.send_message("Команда доступна только в специальных каналах.", ephemeral=True)
-            return False
+        allowed_channels = []
+        allowed_roles = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
+    if clan_channel_id is not None and clan_channel_id not in allowed_channels:
+        allowed_channels.append(clan_channel_id)
+
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
+        return False
 
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
@@ -57,13 +101,24 @@ async def check_permissions(interaction: discord.Interaction, cfg, clan_channel_
             await interaction.response.send_message(f"Ошибка: {e}", ephemeral=True)
             return False
     user_roles = [r.id for r in member.roles]
-    allowed_roles = cfg.get('ALLOWED_ROLE_IDS', [])
+    if not allowed_roles:
+        return True
+
     if not any(r in allowed_roles for r in user_roles):
         await interaction.response.send_message("У вас нет прав.", ephemeral=True)
         return False
     return True
 
-async def check_role_only(interaction: discord.Interaction, cfg) -> bool:
+async def check_role_only(interaction: discord.Interaction, cfg=None, command_name: str = None) -> bool:
+    if cfg is None:
+        cfg = await config_manager.get_config(interaction.guild_id)
+
+    resolved_command_name = command_name or (interaction.command.name if interaction.command else '')
+    if resolved_command_name:
+        _, allowed_roles = get_command_access(cfg, resolved_command_name)
+    else:
+        allowed_roles = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
         try:
@@ -78,7 +133,9 @@ async def check_role_only(interaction: discord.Interaction, cfg) -> bool:
             await interaction.response.send_message(f"Ошибка: {e}", ephemeral=True)
             return False
     user_roles = [r.id for r in member.roles]
-    allowed_roles = cfg.get('ALLOWED_ROLE_IDS', [])
+    if not allowed_roles:
+        return True
+
     if not any(r in allowed_roles for r in user_roles):
         await interaction.response.send_message("У вас нет прав.", ephemeral=True)
         return False

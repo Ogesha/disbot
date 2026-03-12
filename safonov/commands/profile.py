@@ -350,9 +350,9 @@ class ProfileView(View):
 async def cmd_profile(interaction: discord.Interaction, пользователь: Optional[discord.Member] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверка канала – используем LINK_CHANNEL_ID из конфига гильдии
-    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-        await interaction.response.send_message("Эта команда доступна только в специальном канале для управления привязкой.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'профиль')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
     if not await utils.check_role_only(interaction, cfg):
