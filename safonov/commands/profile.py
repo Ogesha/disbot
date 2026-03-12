@@ -130,7 +130,7 @@ class UnlinkButton(Button):
         await db.remove_game_link(self.user_id)
 
         # При удалении привязки вызываем мягкий режим (только клановые роли)
-        changes = await utils.apply_clan_status(member, {'clan': None}, self.cfg)
+        changes, _ = await utils.apply_clan_status(member, {'clan': None}, self.cfg, dry_run=False)
 
         embed = discord.Embed(title="✅ Привязка удалена", color=discord.Color.green())
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -162,7 +162,7 @@ class RefreshButton(Button):
             if info:
                 new_game_info = info
                 # Жёсткий режим при ручном обновлении (полный сброс)
-                changes = await utils.apply_clan_status(self.target_user, new_game_info, self.cfg)
+                changes, _ = await utils.apply_clan_status(self.target_user, new_game_info, self.cfg, dry_run=False)
                 if changes:
                     embed_log = discord.Embed(
                         title="🔄 Ручное обновление профиля",
@@ -214,7 +214,7 @@ class RemovePunishmentModal(Modal, title="Снять наказание"):
         self.cfg = cfg
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not await utils.check_permissions(interaction, self.cfg):
+        if not await utils.check_permissions(interaction, self.cfg, command_name="профиль"):
             return
         try:
             pid = int(self.punishment_id.value)
@@ -243,7 +243,7 @@ class RemovePunishmentButton(Button):
         self.cfg = cfg
 
     async def callback(self, interaction: discord.Interaction):
-        if not await utils.check_permissions(interaction, self.cfg):
+        if not await utils.check_permissions(interaction, self.cfg, command_name="профиль"):
             return
         await interaction.response.send_modal(RemovePunishmentModal(self.target_user_id, self.cfg))
 
@@ -286,7 +286,7 @@ class LinkModal(Modal, title="Привязка игрового аккаунта
         member = interaction.guild.get_member(self.user_id)
         if member:
             # Жёсткий режим при привязке (полный сброс, как при ручном обновлении)
-            changes = await utils.apply_clan_status(member, info, self.cfg)
+            changes, _ = await utils.apply_clan_status(member, info, self.cfg, dry_run=False)
             if changes:
                 embed_log = discord.Embed(
                     title="📌 Обновление после привязки",
@@ -350,13 +350,17 @@ class ProfileView(View):
 async def cmd_profile(interaction: discord.Interaction, пользователь: Optional[discord.Member] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверка канала – используем LINK_CHANNEL_ID из конфига гильдии
-    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-        await interaction.response.send_message("Эта команда доступна только в специальном канале для управления привязкой.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'профиль')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="профиль"):
         return
+
+    # Сразу подтверждаем команду, чтобы избежать "Приложение не отвечает"
+    # при медленном ответе API Stalcraft.
+    await interaction.response.defer(ephemeral=False)
 
     target = пользователь or interaction.user
     link = await db.get_game_link(target.id)
@@ -369,4 +373,4 @@ async def cmd_profile(interaction: discord.Interaction, пользователь
     embed = await create_profile_embed(target, cfg, link, game_info)
     can_moderate = any(role.id in cfg.get('ALLOWED_ROLE_IDS', []) for role in interaction.user.roles)
     view = ProfileView(target, interaction.user, link, can_moderate, game_info, cfg)
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.followup.send(embed=embed, view=view)

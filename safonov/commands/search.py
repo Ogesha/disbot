@@ -17,15 +17,13 @@ async def cmd_search(interaction: discord.Interaction, ник: str, регион
     # Получаем конфиг гильдии (нужен для проверки канала и прав, а также для региона по умолчанию)
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверка канала – только канал приветствий (или можно использовать cfg.get('SEARCH_CHANNEL_ID'), если нужен отдельный)
-    # По текущей логике команда доступна в канале приветствий (NEW_MEMBER_VERIFY_CHANNEL_ID) – используем cfg.get.
-    search_channel = cfg.get('NEW_MEMBER_VERIFY_CHANNEL_ID')
-    if not search_channel or interaction.channel_id != search_channel:
-        await interaction.response.send_message("Эта команда доступна только в канале приветствий.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'поиск')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
     # Проверка прав (роль из ALLOWED_ROLE_IDS) – используем cfg
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="поиск"):
         return
 
     await interaction.response.defer()

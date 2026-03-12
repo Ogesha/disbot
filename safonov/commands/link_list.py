@@ -12,12 +12,12 @@ from config_manager import config_manager
 async def cmd_link_list(interaction: discord.Interaction, роль: Optional[discord.Role] = None):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверка канала (LINK_CHANNEL_ID)
-    if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-        await interaction.response.send_message("Эта команда доступна только в специальном канале для управления привязкой.", ephemeral=True)
+    allowed_channels, _ = utils.get_command_access(cfg, 'linklist')
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
         return
 
-    if not await utils.check_role_only(interaction, cfg):
+    if not await utils.check_role_only(interaction, cfg, command_name="linklist"):
         return
 
     await interaction.response.defer(ephemeral=False)
@@ -101,12 +101,16 @@ async def cmd_link_list(interaction: discord.Interaction, роль: Optional[dis
 
     embed.add_field(name="📊 Статистика", value=stats, inline=False)
 
-    # Добавляем поля с пользователями
-    for member_name, row, role_info in filtered_display:
+    # Добавляем поля с пользователями (лимит Discord: максимум 25 полей в embed)
+    max_user_fields = 24
+    for member_name, row, role_info in filtered_display[:max_user_fields]:
         updated = row['last_updated'].strftime("%d.%m.%Y %H:%M")
         value = f"Ник: {row['game_nick']} (регион {row['region'].upper()})\nОбновлено: {updated}"
         if role_info:
             value += f"\nРоль: {role_info}"
         embed.add_field(name=member_name, value=value, inline=False)
+
+    if len(filtered_display) > max_user_fields:
+        embed.set_footer(text=f"Показано {max_user_fields} из {len(filtered_display)} записей. Уточните фильтр роли для полного списка.")
 
     await interaction.followup.send(embed=embed)

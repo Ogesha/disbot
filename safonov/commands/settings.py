@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
 import json
 import os
 import datetime
@@ -11,84 +11,337 @@ from db_client import db
 from backup import backup_manager
 from config_manager import config_manager
 
+
+COMMAND_ACCESS_OPTIONS = [
+    ("settings", "⚙️ settings"),
+    ("профиль", "👤 профиль"),
+    ("привязать", "🔗 привязать"),
+    ("linklist", "📋 linklist"),
+    ("поиск", "🔎 поиск"),
+    ("штраф", "💸 штраф"),
+    ("варн", "⚠️ варн"),
+    ("оплата", "💰 оплата"),
+    ("снять", "🧹 снять"),
+    ("список", "📄 список"),
+    ("редактировать_штраф", "✏️ редактировать_штраф"),
+]
+
+
+def _cfg_to_dict(cfg_obj):
+    if isinstance(cfg_obj, dict):
+        return dict(cfg_obj)
+    data = getattr(cfg_obj, 'data', None)
+    if isinstance(data, dict):
+        return dict(data)
+    return {}
+
+
+class CommandSelect(Select):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        options = [discord.SelectOption(label=label, value=value) for value, label in COMMAND_ACCESS_OPTIONS]
+        super().__init__(placeholder="Выберите команду", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.selected_command = self.values[0]
+        self.parent_view._load_selected_command()
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        super().__init__(
+            placeholder="Выберите каналы для команды",
+            min_values=0,
+            max_values=10,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum],
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.channel_ids = [channel.id for channel in self.values]
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandLogChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        super().__init__(
+            placeholder="Канал логов команды (опционально)",
+            min_values=0,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum],
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.log_channel_id = self.values[0].id if self.values else None
+        await self.parent_view.refresh_message(interaction)
+
+
+class CommandRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, parent_view: 'CommandAccessView'):
+        super().__init__(placeholder="Выберите роли для команды", min_values=0, max_values=10)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.role_ids = [role.id for role in self.values]
+        await self.parent_view.refresh_message(interaction)
+
+
+class NewMemberRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, parent_view: 'NewMemberRoleSettingsView'):
+        super().__init__(
+            placeholder="Выберите роль для новых пользователей",
+            min_values=0,
+            max_values=1
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.new_member_role_id = self.values[0].id if self.values else None
+        await self.parent_view.refresh_message(interaction)
+
+
+class AutoClanCheckLogChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, parent_view: 'AutoClanCheckLogSettingsView'):
+        super().__init__(
+            placeholder="Выберите канал логов автопроверки",
+            min_values=0,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum],
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.log_channel_id = self.values[0].id if self.values else None
+        await self.parent_view.refresh_message(interaction)
+
+
+class AutoClanCheckLogSettingsView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        value = current_config.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID')
+        self.log_channel_id = int(value) if str(value).isdigit() and int(value) > 0 else None
+
+        self.channel_select = AutoClanCheckLogChannelSelect(self)
+        self.add_item(self.channel_select)
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🧾 Логи автопроверки кланов", color=discord.Color.blurple())
+        if self.log_channel_id:
+            channel = guild.get_channel(self.log_channel_id)
+            channel_text = channel.mention if channel else f"`{self.log_channel_id}`"
+        else:
+            channel_text = "Не выбран"
+        embed.add_field(name="Канал логов", value=channel_text, inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=2)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.current_config['AUTO_CLAN_CHECK_LOG_CHANNEL_ID'] = self.log_channel_id
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил канал логов автопроверки")
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить", style=discord.ButtonStyle.secondary, row=2)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.log_channel_id = None
+        self.current_config['AUTO_CLAN_CHECK_LOG_CHANNEL_ID'] = None
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Канал очищен")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=2)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id)
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class NewMemberRoleSettingsView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        value = current_config.get('NEW_MEMBER_RESTRICTED_ROLE_ID')
+        self.new_member_role_id = int(value) if str(value).isdigit() and int(value) > 0 else None
+
+        self.role_select = NewMemberRoleSelect(self)
+        self.add_item(self.role_select)
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🆕 Роль для новых пользователей", color=discord.Color.blurple())
+        if self.new_member_role_id:
+            role = guild.get_role(self.new_member_role_id)
+            role_text = role.mention if role else f"`{self.new_member_role_id}`"
+        else:
+            role_text = "Не выбрана"
+        embed.add_field(name="Текущая роль", value=role_text, inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=2)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.current_config['NEW_MEMBER_RESTRICTED_ROLE_ID'] = self.new_member_role_id
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил роль для новых пользователей")
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить", style=discord.ButtonStyle.secondary, row=2)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.new_member_role_id = None
+        self.current_config['NEW_MEMBER_RESTRICTED_ROLE_ID'] = None
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Роль очищена")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=2)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id)
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CommandAccessView(View):
+    def __init__(self, current_config: dict):
+        super().__init__(timeout=300)
+        self.current_config = current_config
+        self.command_access = dict(current_config.get('COMMAND_ACCESS', {}) or {})
+        self.selected_command = COMMAND_ACCESS_OPTIONS[0][0]
+        self.channel_ids = []
+        self.role_ids = []
+        self.log_channel_id = None
+
+        self.command_select = CommandSelect(self)
+        self.channel_select = CommandChannelSelect(self)
+        self.log_channel_select = CommandLogChannelSelect(self)
+        self.role_select = CommandRoleSelect(self)
+
+        self.add_item(self.command_select)
+        self.add_item(self.channel_select)
+        self.add_item(self.log_channel_select)
+        self.add_item(self.role_select)
+
+        self._load_selected_command()
+
+    def _load_selected_command(self):
+        data = self.command_access.get(self.selected_command, {}) if isinstance(self.command_access, dict) else {}
+        self.channel_ids = [int(x) for x in data.get('channel_ids', []) if str(x).isdigit()]
+        self.role_ids = [int(x) for x in data.get('role_ids', []) if str(x).isdigit()]
+        log_channel = data.get('log_channel_id')
+        self.log_channel_id = int(log_channel) if str(log_channel).isdigit() else None
+
+    def _create_embed(self, guild: discord.Guild):
+        embed = discord.Embed(title="🎛️ Доступ к командам", color=discord.Color.blurple())
+        embed.description = "Выберите команду, затем каналы и роли через выпадающие списки."
+
+        channel_mentions = []
+        for cid in self.channel_ids:
+            channel = guild.get_channel(cid)
+            channel_mentions.append(channel.mention if channel else f"`{cid}`")
+
+        role_mentions = []
+        for rid in self.role_ids:
+            role = guild.get_role(rid)
+            role_mentions.append(role.mention if role else f"`{rid}`")
+
+        log_channel_text = "Не выбран"
+        if self.log_channel_id:
+            log_channel = guild.get_channel(self.log_channel_id)
+            log_channel_text = log_channel.mention if log_channel else f"`{self.log_channel_id}`"
+
+        embed.add_field(name="Команда", value=f"`/{self.selected_command}`", inline=False)
+        embed.add_field(name="Каналы", value='\n'.join(channel_mentions) if channel_mentions else "Не выбраны", inline=False)
+        embed.add_field(name="Роли", value='\n'.join(role_mentions) if role_mentions else "Не выбраны (доступ всем)", inline=False)
+        embed.add_field(name="Канал логов", value=log_channel_text, inline=False)
+        return embed
+
+    async def refresh_message(self, interaction: discord.Interaction):
+        embed = self._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="💾 Сохранить", style=discord.ButtonStyle.success, row=3)
+    async def save_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.command_access[self.selected_command] = {
+            'channel_ids': self.channel_ids,
+            'role_ids': self.role_ids,
+            'log_channel_id': self.log_channel_id,
+        }
+        self.current_config['COMMAND_ACCESS'] = self.command_access
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        logger.send_tg_log(f"⚙️ {interaction.user} изменил доступ команды /{self.selected_command}")
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Сохранено")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🧹 Очистить для команды", style=discord.ButtonStyle.secondary, row=3)
+    async def clear_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.command_access[self.selected_command] = {'channel_ids': [], 'role_ids': [], 'log_channel_id': None}
+        self.current_config['COMMAND_ACCESS'] = self.command_access
+        self.channel_ids = []
+        self.role_ids = []
+        self.log_channel_id = None
+        await config_manager.update_config(interaction.guild_id, self.current_config)
+        embed = self._create_embed(interaction.guild)
+        embed.set_footer(text="Настройки команды очищены")
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger, row=3)
+    async def back_button(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
+        current_config = await db.get_server_config(interaction.guild_id)
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
+        view = SettingsView(current_config)
+        embed = discord.Embed(
+            title="⚙️ Настройки бота",
+            description="Выберите раздел для редактирования.",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
 # ---------- Модальные окна ----------
-class GeneralSettingsModal(Modal, title="Общие настройки"):
-    allowed_roles = TextInput(label="ID ролей (через запятую)", placeholder="123,456", required=False)
-    link_channel = TextInput(label="ID канала профиля", required=False)
-    command_channels = TextInput(label="ID каналов команд (через запятую)", required=False)
-    fine_expire_days = TextInput(label="Дней до первого варна за неуплату", required=False)
-    punishment_expire_days = TextInput(label="Дней до автоснятия наказания", required=False)
-    reminder_interval = TextInput(label="Интервал напоминаний (часы)", required=False)
 
-    def __init__(self, current_config: dict):
-        super().__init__()
-        self.current_config = current_config
-        self.allowed_roles.default = ','.join(str(x) for x in current_config.get('ALLOWED_ROLE_IDS', []))
-        self.link_channel.default = str(current_config.get('LINK_CHANNEL_ID', ''))
-        self.command_channels.default = ','.join(str(x) for x in current_config.get('COMMAND_CHANNEL_IDS', []))
-        self.fine_expire_days.default = str(current_config.get('FINE_EXPIRE_DAYS', 7))
-        self.punishment_expire_days.default = str(current_config.get('PUNISHMENT_EXPIRE_DAYS', 14))
-        self.reminder_interval.default = str(current_config.get('REMINDER_INTERVAL_HOURS', 48))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        new_config = self.current_config.copy()
-        try:
-            if self.allowed_roles.value:
-                new_config['ALLOWED_ROLE_IDS'] = [int(x.strip()) for x in self.allowed_roles.value.split(',') if x.strip()]
-            if self.link_channel.value:
-                new_config['LINK_CHANNEL_ID'] = int(self.link_channel.value)
-            if self.command_channels.value:
-                new_config['COMMAND_CHANNEL_IDS'] = [int(x.strip()) for x in self.command_channels.value.split(',') if x.strip()]
-            if self.fine_expire_days.value:
-                new_config['FINE_EXPIRE_DAYS'] = int(self.fine_expire_days.value)
-            if self.punishment_expire_days.value:
-                new_config['PUNISHMENT_EXPIRE_DAYS'] = int(self.punishment_expire_days.value)
-            if self.reminder_interval.value:
-                new_config['REMINDER_INTERVAL_HOURS'] = int(self.reminder_interval.value)
-        except ValueError:
-            await interaction.response.send_message("Неверный формат числа. Проверьте ввод.", ephemeral=True)
-            return
-
-        await db.save_server_config(interaction.guild_id, new_config)
-        await config_manager.update_config(interaction.guild_id, new_config)
-        embed = discord.Embed(title="✅ Общие настройки сохранены", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.send_tg_log(f"⚙️ {interaction.user} изменил общие настройки")
-
-class ChannelSettingsModal(Modal, title="Настройка каналов логов"):
-    log_channel = TextInput(label="ID канала логов (общий)", placeholder="123456789012345678", required=False)
-    new_member_log = TextInput(label="ID канала новых участников", required=False)
-    member_change_log = TextInput(label="ID канала изменений ролей", required=False)
-    violation_log = TextInput(label="ID канала нарушений", required=False)
-
-    def __init__(self, current_config: dict):
-        super().__init__()
-        self.current_config = current_config
-        self.log_channel.default = str(current_config.get('LOG_CHANNEL_ID', ''))
-        self.new_member_log.default = str(current_config.get('NEW_MEMBER_LOG_CHANNEL_ID', ''))
-        self.member_change_log.default = str(current_config.get('MEMBER_CHANGE_LOG_CHANNEL_ID', ''))
-        self.violation_log.default = str(current_config.get('VIOLATION_LOG_CHANNEL_ID', ''))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        new_config = self.current_config.copy()
-        try:
-            if self.log_channel.value:
-                new_config['LOG_CHANNEL_ID'] = int(self.log_channel.value)
-            if self.new_member_log.value:
-                new_config['NEW_MEMBER_LOG_CHANNEL_ID'] = int(self.new_member_log.value)
-            if self.member_change_log.value:
-                new_config['MEMBER_CHANGE_LOG_CHANNEL_ID'] = int(self.member_change_log.value)
-            if self.violation_log.value:
-                new_config['VIOLATION_LOG_CHANNEL_ID'] = int(self.violation_log.value)
-        except ValueError:
-            await interaction.response.send_message("ID каналов должны быть числами.", ephemeral=True)
-            return
-
-        await db.save_server_config(interaction.guild_id, new_config)
-        await config_manager.update_config(interaction.guild_id, new_config)
-        embed = discord.Embed(title="✅ Настройки каналов сохранены", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.send_tg_log(f"⚙️ {interaction.user} изменил настройки каналов логов")
 
 class Clan1SettingsModal(Modal, title="Настройки клана 1"):
     clan_name = TextInput(label="Название клана", required=True)
@@ -96,8 +349,6 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
     ex_role_ids = TextInput(label="ID ролей бывших (через запятую)", required=False)
     high_role_ids = TextInput(label="ID высоких ролей (через запятую)", required=False)
     nick_prefix = TextInput(label="Префикс члена", required=False)
-    ex_nick_prefix = TextInput(label="Префикс бывшего", required=False)
-    command_channel = TextInput(label="ID канала для команд наказаний", required=False)
 
     def __init__(self, current_config: dict):
         super().__init__()
@@ -107,8 +358,6 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
         self.ex_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN1_EX_MEMBER_ROLE_IDS', []))
         self.high_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN1_HIGH_RANK_ROLE_IDS', []))
         self.nick_prefix.default = current_config.get('CLAN1_NICK_PREFIX', '[АЛЬЦ]')
-        self.ex_nick_prefix.default = current_config.get('CLAN1_EX_NICK_PREFIX', '[Друг]')
-        self.command_channel.default = str(current_config.get('CLAN1_COMMAND_CHANNEL_ID', ''))
 
     async def on_submit(self, interaction: discord.Interaction):
         new_config = self.current_config.copy()
@@ -120,13 +369,10 @@ class Clan1SettingsModal(Modal, title="Настройки клана 1"):
                 new_config['CLAN1_EX_MEMBER_ROLE_IDS'] = [int(x.strip()) for x in self.ex_role_ids.value.split(',') if x.strip()]
             if self.high_role_ids.value:
                 new_config['CLAN1_HIGH_RANK_ROLE_IDS'] = [int(x.strip()) for x in self.high_role_ids.value.split(',') if x.strip()]
-            if self.command_channel.value:
-                new_config['CLAN1_COMMAND_CHANNEL_ID'] = int(self.command_channel.value)
         except ValueError:
             await interaction.response.send_message("ID должны быть числами, разделёнными запятыми.", ephemeral=True)
             return
         new_config['CLAN1_NICK_PREFIX'] = self.nick_prefix.value or ''
-        new_config['CLAN1_EX_NICK_PREFIX'] = self.ex_nick_prefix.value or ''
 
         await db.save_server_config(interaction.guild_id, new_config)
         await config_manager.update_config(interaction.guild_id, new_config)
@@ -140,8 +386,6 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
     ex_role_ids = TextInput(label="ID ролей бывших (через запятую)", required=False)
     high_role_ids = TextInput(label="ID высоких ролей (через запятую)", required=False)
     nick_prefix = TextInput(label="Префикс члена", required=False)
-    ex_nick_prefix = TextInput(label="Префикс бывшего", required=False)
-    command_channel = TextInput(label="ID канала для команд наказаний", required=False)
 
     def __init__(self, current_config: dict):
         super().__init__()
@@ -151,8 +395,6 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
         self.ex_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN2_EX_MEMBER_ROLE_IDS', []))
         self.high_role_ids.default = ','.join(str(x) for x in current_config.get('CLAN2_HIGH_RANK_ROLE_IDS', []))
         self.nick_prefix.default = current_config.get('CLAN2_NICK_PREFIX', '')
-        self.ex_nick_prefix.default = current_config.get('CLAN2_EX_NICK_PREFIX', '')
-        self.command_channel.default = str(current_config.get('CLAN2_COMMAND_CHANNEL_ID', ''))
 
     async def on_submit(self, interaction: discord.Interaction):
         new_config = self.current_config.copy()
@@ -164,13 +406,10 @@ class Clan2SettingsModal(Modal, title="Настройки клана 2"):
                 new_config['CLAN2_EX_MEMBER_ROLE_IDS'] = [int(x.strip()) for x in self.ex_role_ids.value.split(',') if x.strip()]
             if self.high_role_ids.value:
                 new_config['CLAN2_HIGH_RANK_ROLE_IDS'] = [int(x.strip()) for x in self.high_role_ids.value.split(',') if x.strip()]
-            if self.command_channel.value:
-                new_config['CLAN2_COMMAND_CHANNEL_ID'] = int(self.command_channel.value)
         except ValueError:
             await interaction.response.send_message("ID должны быть числами, разделёнными запятыми.", ephemeral=True)
             return
         new_config['CLAN2_NICK_PREFIX'] = self.nick_prefix.value or ''
-        new_config['CLAN2_EX_NICK_PREFIX'] = self.ex_nick_prefix.value or ''
 
         await db.save_server_config(interaction.guild_id, new_config)
         await config_manager.update_config(interaction.guild_id, new_config)
@@ -291,8 +530,10 @@ class BackupActionView(View):
 
     @discord.ui.button(label="🔙 Назад", style=discord.ButtonStyle.danger)
     async def back(self, interaction: discord.Interaction, button: Button):
+        cfg = await config_manager.get_config(interaction.guild_id)
         current_config = await db.get_server_config(interaction.guild_id)
-        print(f"DEBUG current_config: {current_config}")
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -307,14 +548,6 @@ class SettingsView(View):
         super().__init__(timeout=180)
         self.current_config = current_config
 
-    @discord.ui.button(label="Общие", style=discord.ButtonStyle.primary)
-    async def general_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(GeneralSettingsModal(self.current_config))
-
-    @discord.ui.button(label="Каналы логов", style=discord.ButtonStyle.primary)
-    async def channels_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(ChannelSettingsModal(self.current_config))
-
     @discord.ui.button(label="Клан 1", style=discord.ButtonStyle.secondary)
     async def clan1_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(Clan1SettingsModal(self.current_config))
@@ -326,6 +559,24 @@ class SettingsView(View):
     @discord.ui.button(label="Защита от сноса", style=discord.ButtonStyle.danger)
     async def antinuke_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(AntiNukeSettingsModal(self.current_config))
+
+    @discord.ui.button(label="Доступ команд", style=discord.ButtonStyle.secondary)
+    async def command_access_button(self, interaction: discord.Interaction, button: Button):
+        view = CommandAccessView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Новые пользователи", style=discord.ButtonStyle.secondary)
+    async def new_member_role_button(self, interaction: discord.Interaction, button: Button):
+        view = NewMemberRoleSettingsView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Логи автопроверки", style=discord.ButtonStyle.secondary)
+    async def auto_clan_check_log_button(self, interaction: discord.Interaction, button: Button):
+        view = AutoClanCheckLogSettingsView(self.current_config)
+        embed = view._create_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Бэкапы", style=discord.ButtonStyle.success)
     async def backup_button(self, interaction: discord.Interaction, button: Button):
@@ -345,14 +596,20 @@ class SettingsView(View):
 @app_commands.command(name="settings", description="Настройка параметров бота (доступно в канале профиля)")
 async def cmd_settings(interaction: discord.Interaction):
     try:
+        if interaction.guild is None:
+            await interaction.response.send_message("Эта команда доступна только на сервере.", ephemeral=True)
+            return
+
         cfg = await config_manager.get_config(interaction.guild_id)
-        if interaction.channel_id != cfg.get('LINK_CHANNEL_ID'):
-            await interaction.response.send_message("Эта команда доступна только в канале профиля.", ephemeral=True)
+        allowed_channels, _ = utils.get_command_access(cfg, 'settings')
+        if allowed_channels and interaction.channel_id not in allowed_channels:
+            await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False)
         current_config = await db.get_server_config(interaction.guild_id)
-        print(f"DEBUG current_config: {current_config}")
+        if not isinstance(current_config, dict):
+            current_config = _cfg_to_dict(cfg)
         view = SettingsView(current_config)
         embed = discord.Embed(
             title="⚙️ Настройки бота",
@@ -362,4 +619,7 @@ async def cmd_settings(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, view=view)
     except Exception as e:
         print(f"❌ Ошибка в /settings: {type(e).__name__}: {e}")
-        await interaction.followup.send("Произошла внутренняя ошибка.", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("Произошла внутренняя ошибка.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Произошла внутренняя ошибка.", ephemeral=True)

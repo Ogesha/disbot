@@ -6,6 +6,60 @@ from datetime import timezone
 from typing import List, Tuple
 import logger
 from db_client import db
+from config_manager import config_manager
+
+
+def _normalize_ids(values) -> List[int]:
+    if not values:
+        return []
+    normalized = []
+    for value in values:
+        try:
+            int_value = int(value)
+            if int_value > 0:
+                normalized.append(int_value)
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def get_command_access(cfg, command_name: str) -> Tuple[List[int], List[int]]:
+    command_name = (command_name or '').lower()
+    access_map = cfg.get('COMMAND_ACCESS', {}) or {}
+    command_data = access_map.get(command_name, {}) if isinstance(access_map, dict) else {}
+
+    channel_ids = _normalize_ids(command_data.get('channel_ids', []))
+    role_ids = _normalize_ids(command_data.get('role_ids', []))
+
+    if not channel_ids:
+        if command_name in {'штраф', 'варн', 'оплата', 'снять', 'список', 'редактировать_штраф'}:
+            channel_ids = _normalize_ids([cfg.get('CLAN1_COMMAND_CHANNEL_ID'), cfg.get('CLAN2_COMMAND_CHANNEL_ID')])
+        elif command_name in {'профиль', 'привязать', 'linklist', 'settings', 'unlink', 'изменить'}:
+            channel_ids = _normalize_ids([cfg.get('LINK_CHANNEL_ID')])
+        elif command_name in {'поиск'}:
+            channel_ids = _normalize_ids([cfg.get('SEARCH_CHANNEL_ID')])
+        else:
+            channel_ids = _normalize_ids(cfg.get('COMMAND_CHANNEL_IDS', []))
+
+    if not role_ids:
+        role_ids = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
+    return channel_ids, role_ids
+
+
+def get_command_log_channel_id(cfg, command_name: str, fallback_key: str = None):
+    command_name = (command_name or '').lower()
+    access_map = cfg.get('COMMAND_ACCESS', {}) or {}
+    command_data = access_map.get(command_name, {}) if isinstance(access_map, dict) else {}
+    value = command_data.get('log_channel_id')
+    try:
+        if value:
+            iv = int(value)
+            if iv > 0:
+                return iv
+        return cfg.get(fallback_key) if fallback_key else None
+    except (TypeError, ValueError):
+        return cfg.get(fallback_key) if fallback_key else None
 
 def create_message_link(guild_id: int, channel_id: int, message_id: int) -> str:
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
@@ -32,16 +86,23 @@ async def parse_members(guild: discord.Guild, members_str: str) -> List[discord.
             members.append(member)
     return members
 
-async def check_permissions(interaction: discord.Interaction, cfg, clan_channel_id: int = None) -> bool:
-    if clan_channel_id is not None:
-        if interaction.channel_id != clan_channel_id:
-            await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
-            return False
+async def check_permissions(interaction: discord.Interaction, cfg=None, clan_channel_id: int = None, command_name: str = None) -> bool:
+    if cfg is None:
+        cfg = await config_manager.get_config(interaction.guild_id)
+
+    resolved_command_name = command_name or (interaction.command.name if interaction.command else '')
+    if resolved_command_name:
+        allowed_channels, allowed_roles = get_command_access(cfg, resolved_command_name)
     else:
-        allowed_channels = cfg.get('COMMAND_CHANNEL_IDS', [])
-        if interaction.channel_id not in allowed_channels:
-            await interaction.response.send_message("Команда доступна только в специальных каналах.", ephemeral=True)
-            return False
+        allowed_channels = []
+        allowed_roles = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
+    if clan_channel_id is not None and clan_channel_id not in allowed_channels:
+        allowed_channels.append(clan_channel_id)
+
+    if allowed_channels and interaction.channel_id not in allowed_channels:
+        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
+        return False
 
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
@@ -57,13 +118,24 @@ async def check_permissions(interaction: discord.Interaction, cfg, clan_channel_
             await interaction.response.send_message(f"Ошибка: {e}", ephemeral=True)
             return False
     user_roles = [r.id for r in member.roles]
-    allowed_roles = cfg.get('ALLOWED_ROLE_IDS', [])
+    if not allowed_roles:
+        return True
+
     if not any(r in allowed_roles for r in user_roles):
         await interaction.response.send_message("У вас нет прав.", ephemeral=True)
         return False
     return True
 
-async def check_role_only(interaction: discord.Interaction, cfg) -> bool:
+async def check_role_only(interaction: discord.Interaction, cfg=None, command_name: str = None) -> bool:
+    if cfg is None:
+        cfg = await config_manager.get_config(interaction.guild_id)
+
+    resolved_command_name = command_name or (interaction.command.name if interaction.command else '')
+    if resolved_command_name:
+        _, allowed_roles = get_command_access(cfg, resolved_command_name)
+    else:
+        allowed_roles = _normalize_ids(cfg.get('ALLOWED_ROLE_IDS', []))
+
     member = interaction.guild.get_member(interaction.user.id)
     if not member:
         try:
@@ -78,7 +150,9 @@ async def check_role_only(interaction: discord.Interaction, cfg) -> bool:
             await interaction.response.send_message(f"Ошибка: {e}", ephemeral=True)
             return False
     user_roles = [r.id for r in member.roles]
-    allowed_roles = cfg.get('ALLOWED_ROLE_IDS', [])
+    if not allowed_roles:
+        return True
+
     if not any(r in allowed_roles for r in user_roles):
         await interaction.response.send_message("У вас нет прав.", ephemeral=True)
         return False
@@ -179,129 +253,114 @@ def get_user_clans_by_high_roles(member: discord.Member, cfg) -> list:
 def is_member_of_clan(member: discord.Member, clan_name: str, cfg) -> bool:
     if clan_name == 'clan1':
         member_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN1_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)]
+        high_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN1_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)]
     elif clan_name == 'clan2':
         member_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN2_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)]
+        high_roles = [member.guild.get_role(rid) for rid in cfg.get('CLAN2_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)]
     else:
         return False
-    return any(role in member.roles for role in member_roles)
+    clan_roles = member_roles + high_roles
+    return any(role in member.roles for role in clan_roles)
 
 async def apply_clan_status(member: discord.Member, game_info, cfg, dry_run: bool = False) -> Tuple[List[str], List[tuple]]:
     """
-    Анализирует статус клана по API и возвращает:
-      - text_changes: список строк для отображения в логе.
-      - actions: список кортежей ('add_role', member_id, role_id) или ('remove_role', member_id, role_id) или ('edit_nick', member_id, new_nick).
-    Если dry_run=False, сразу выполняет действия.
+    Синхронизация ролей/префикса по API:
+    - если игрок в одном из 2 кланов: снимаем роли/префиксы другого клана, убираем "друга",
+      оставляем высокую роль или выдаём основную роль нужного клана;
+    - если игрок не в кланах: снимаем все клановые/высокие роли, выдаём роль бывшего (друга).
     """
-    text_changes = []
-    actions = []
-    if not game_info:
+    text_changes: List[str] = []
+    actions: List[tuple] = []
+
+    if game_info is None:
         return text_changes, actions
 
-    player_clan_name = game_info.get('clan', {}).get('name', '').lower() if game_info.get('clan') else None
+    player_clan_name = ((game_info.get('clan') or {}).get('name') or '').lower()
 
-    # Конфигурации кланов
     clans = []
-    if cfg.get('CLAN1_NAME'):
+    for idx in (1, 2):
+        name = str(cfg.get(f'CLAN{idx}_NAME', '')).strip()
+        if not name:
+            continue
         clans.append({
-            'name': cfg.get('CLAN1_NAME').lower(),
-            'member_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN1_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'ex_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN1_EX_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'high_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN1_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'prefix': cfg.get('CLAN1_NICK_PREFIX', ''),
-            'ex_prefix': cfg.get('CLAN1_EX_NICK_PREFIX', ''),
-        })
-    if cfg.get('CLAN2_NAME'):
-        clans.append({
-            'name': cfg.get('CLAN2_NAME').lower(),
-            'member_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN2_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'ex_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN2_EX_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'high_roles': [member.guild.get_role(rid) for rid in cfg.get('CLAN2_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)],
-            'prefix': cfg.get('CLAN2_NICK_PREFIX', ''),
-            'ex_prefix': cfg.get('CLAN2_EX_NICK_PREFIX', ''),
+            'name': name.lower(),
+            'display': name,
+            'member_roles': [member.guild.get_role(rid) for rid in cfg.get(f'CLAN{idx}_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
+            'ex_roles': [member.guild.get_role(rid) for rid in cfg.get(f'CLAN{idx}_EX_MEMBER_ROLE_IDS', []) if member.guild.get_role(rid)],
+            'high_roles': [member.guild.get_role(rid) for rid in cfg.get(f'CLAN{idx}_HIGH_RANK_ROLE_IDS', []) if member.guild.get_role(rid)],
+            'prefix': cfg.get(f'CLAN{idx}_NICK_PREFIX', '') or '',
+            'ex_prefix': cfg.get(f'CLAN{idx}_EX_NICK_PREFIX', '') or '',
         })
 
-    # Текущие роли
-    current_role_ids = {role.id for role in member.roles}
+    target_clan = next((c for c in clans if c['name'] == player_clan_name), None)
 
-    # Обрабатываем каждый клан
-    for clan in clans:
-        clan_name = clan['name']
-        member_roles = clan['member_roles']
-        ex_roles = clan['ex_roles']
-        high_roles = clan['high_roles']
+    def add_action(action):
+        if action not in actions:
+            actions.append(action)
 
-        has_member = any(role in member.roles for role in member_roles)
-        has_high = any(role in member.roles for role in high_roles)
-        has_ex = any(role in member.roles for role in ex_roles)
+    if target_clan:
+        for clan in clans:
+            has_member = any(r in member.roles for r in clan['member_roles'])
+            has_high = any(r in member.roles for r in clan['high_roles'])
+            has_ex = any(r in member.roles for r in clan['ex_roles'])
 
-        is_in_clan = (player_clan_name == clan_name)
-
-        if is_in_clan:
-            # Состоит в этом клане
-            if has_ex:
-                # Снимаем роль бывшего
-                for role in ex_roles:
+            if clan is target_clan:
+                for role in clan['ex_roles']:
                     if role in member.roles:
-                        actions.append(('remove_role', member.id, role.id))
-                text_changes.append(f"👤 {member.mention} снята роль бывшего клана {clan_name}.")
+                        add_action(('remove_role', member.id, role.id))
+                if has_ex:
+                    text_changes.append(f"👤 {member.mention} снята роль бывшего клана {clan['display']}.")
 
-            if not has_high and not has_member and member_roles:
-                # Выдаём роль члена
-                actions.append(('add_role', member.id, member_roles[0].id))
-                text_changes.append(f"➕ {member.mention} выдана роль клана {clan_name}.")
-            elif has_high:
-                text_changes.append(f"👤 {member.mention} имеет высокую роль клана {clan_name}, роль не выдана.")
-        else:
-            # Не состоит в этом клане
-            if has_member:
-                # Снимаем роль члена
-                for role in member_roles:
+                if not has_member and not has_high and clan['member_roles']:
+                    add_action(('add_role', member.id, clan['member_roles'][0].id))
+                    text_changes.append(f"➕ {member.mention} выдана роль клана {clan['display']}.")
+            else:
+                removed_any = False
+                for role in clan['member_roles'] + clan['high_roles'] + clan['ex_roles']:
                     if role in member.roles:
-                        actions.append(('remove_role', member.id, role.id))
-                text_changes.append(f"👤 {member.mention} сняты роли клана {clan_name}.")
+                        add_action(('remove_role', member.id, role.id))
+                        removed_any = True
+                if removed_any:
+                    text_changes.append(f"👤 {member.mention} сняты роли клана {clan['display']}.")
+    else:
+        friend_role_given = False
+        for clan in clans:
+            had_member_or_high = any(r in member.roles for r in (clan['member_roles'] + clan['high_roles']))
 
-                # Выдаём роль бывшего (если была роль члена)
-                if ex_roles and not has_ex:
-                    actions.append(('add_role', member.id, ex_roles[0].id))
-                    text_changes.append(f"👤 {member.mention} выдана роль бывшего клана {clan_name}.")
+            for role in clan['member_roles'] + clan['high_roles']:
+                if role in member.roles:
+                    add_action(('remove_role', member.id, role.id))
 
-            if has_high:
-                # Снимаем высокие роли
-                for role in high_roles:
-                    if role in member.roles:
-                        actions.append(('remove_role', member.id, role.id))
-                text_changes.append(f"👤 {member.mention} сняты высокие роли клана {clan_name}.")
+            for role in clan['ex_roles']:
+                if role in member.roles:
+                    add_action(('remove_role', member.id, role.id))
 
-    # ---------- Формирование ника ----------
+            if had_member_or_high and clan['ex_roles']:
+                add_action(('add_role', member.id, clan['ex_roles'][0].id))
+                friend_role_given = True
+
+        if friend_role_given:
+            text_changes.append(f"👤 {member.mention} сняты клановые роли и выдана роль друга.")
+
     current_nick = member.display_name
     new_nick = current_nick
 
-    # Удаляем все известные префиксы
-    for clan in clans:
-        if new_nick.startswith(clan['prefix']):
-            new_nick = new_nick[len(clan['prefix']):]
-        if new_nick.startswith(clan['ex_prefix']):
-            new_nick = new_nick[len(clan['ex_prefix']):]
+    changed = True
+    while changed:
+        changed = False
+        for clan in clans:
+            for pref in (clan['prefix'], clan['ex_prefix']):
+                if pref and new_nick.startswith(pref):
+                    new_nick = new_nick[len(pref):].lstrip()
+                    changed = True
 
-    # Определяем, какой префикс нужно добавить
-    prefix_to_add = None
-    for clan in clans:
-        if player_clan_name == clan['name']:
-            prefix_to_add = clan['prefix']
-            break
-
-    if prefix_to_add:
-        new_nick = f"{prefix_to_add}{new_nick}"
-    # иначе оставляем без префикса
+    if target_clan and target_clan['prefix']:
+        new_nick = f"{target_clan['prefix']} {new_nick}".strip()
 
     if new_nick != current_nick:
-        actions.append(('edit_nick', member.id, new_nick))
-        if prefix_to_add:
-            text_changes.append(f"✏️ {member.mention} изменён ник (добавлен префикс {prefix_to_add}).")
-        else:
-            text_changes.append(f"✏️ {member.mention} изменён ник (префиксы удалены).")
+        add_action(('edit_nick', member.id, new_nick))
+        text_changes.append(f"✏️ {member.mention} изменён ник.")
 
-    # Если не dry_run – выполняем все действия сейчас
     if not dry_run:
         for action in actions:
             try:

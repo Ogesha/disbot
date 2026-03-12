@@ -20,13 +20,7 @@ REASON_CHOICES = [
 async def cmd_warn(interaction: discord.Interaction, пользователи: str, причина: str):
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    clan1_channel = cfg.get('CLAN1_COMMAND_CHANNEL_ID')
-    clan2_channel = cfg.get('CLAN2_COMMAND_CHANNEL_ID')
-    if interaction.channel_id not in (clan1_channel, clan2_channel):
-        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
-        return
-
-    if not await utils.check_permissions(interaction, cfg, clan_channel_id=interaction.channel_id):
+    if not await utils.check_permissions(interaction, cfg, command_name="варн"):
         return
 
     targets = await utils.parse_members(interaction.guild, пользователи)
@@ -36,11 +30,9 @@ async def cmd_warn(interaction: discord.Interaction, пользователи: s
 
     # Отладка: определяем кланы инициатора
     initiator_clans = utils.get_user_clans_by_high_roles(interaction.user, cfg)
-    print(f"DEBUG: initiator clans: {initiator_clans}")
     if initiator_clans:
         for target in targets:
             member_of = [utils.is_member_of_clan(target, clan, cfg) for clan in initiator_clans]
-            print(f"DEBUG: target {target} member of {initiator_clans}: {member_of}")
             if not any(member_of):
                 await interaction.response.send_message(
                     f"Пользователь {target.mention} не является членом вашего клана.",

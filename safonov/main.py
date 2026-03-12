@@ -40,10 +40,22 @@ intents.moderation = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
+
+@tree.interaction_check
+async def no_dm_commands(interaction: discord.Interaction) -> bool:
+    """Запрещаем использовать slash-команды в ЛС с ботом."""
+    if interaction.guild is None:
+        if interaction.response.is_done():
+            await interaction.followup.send("Эти команды доступны только на сервере.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Эти команды доступны только на сервере.", ephemeral=True)
+        return False
+    return True
+
 # Глобальные переменные
 antinuke = None
 backup_manager = None
-pending_clan_changes = {}  # guild_id -> (text_changes, actions)
+pending_clan_changes = {}  # guild_id -> {'text_changes': list[str], 'actions': list[tuple], 'not_found': list[str], 'log_channel_id': int}
 
 # ---------- Добавление команд ----------
 tree.add_command(cmd_fine)
@@ -64,6 +76,43 @@ class ConfirmClanChangesView(View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=300)  # 5 минут
         self.guild_id = guild_id
+        self.message = None
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+        data = pending_clan_changes.pop(self.guild_id, None)
+        if not data:
+            return
+
+        guild = bot.get_guild(self.guild_id)
+        if not guild:
+            return
+
+        log_channel = guild.get_channel(data.get('log_channel_id')) if data.get('log_channel_id') else None
+        if not log_channel:
+            return
+
+        not_found = data.get('not_found', [])
+        embed = discord.Embed(
+            title="⏱️ Проверка кланов: время подтверждения истекло",
+            description="Кнопки подтверждения скрыты (5 минут без ответа).",
+            color=discord.Color.orange(),
+            timestamp=datetime.datetime.now(timezone.utc)
+        )
+        if not_found:
+            embed.add_field(name="Не найдено в кланах", value="\n".join(not_found[:20]), inline=False)
+        else:
+            embed.add_field(name="Не найдено в кланах", value="Нет", inline=False)
+
+        await log_channel.send(embed=embed)
 
     @discord.ui.button(label="✅ Подтвердить", style=discord.ButtonStyle.success)
     async def confirm_button(self, interaction: discord.Interaction, button: Button):
@@ -76,7 +125,8 @@ class ConfirmClanChangesView(View):
             await interaction.response.send_message("Нет ожидающих изменений.", ephemeral=True)
             return
 
-        text_changes, actions = data
+        text_changes = data.get('text_changes', [])
+        actions = data.get('actions', [])
         guild = interaction.guild
         success = []
         failed = []
@@ -215,7 +265,7 @@ async def before_bg():
     await bot.wait_until_ready()
 
 # ---------- Задача проверки кланов (с подтверждением) ----------
-@tasks.loop(hours=1)
+@tasks.loop(minutes=10)
 async def clan_check_loop():
     await bot.wait_until_ready()
     print("Запуск проверки кланов...")
@@ -238,26 +288,41 @@ async def clan_check_loop():
 
         all_text_changes = []
         all_actions = []
+        not_found_in_clans = []
 
         async with db.pool.acquire() as conn:
-            rows = await conn.fetch('SELECT * FROM game_links')
+            rows = await conn.fetch('SELECT DISTINCT ON (discord_id) * FROM game_links ORDER BY discord_id, last_updated DESC')
         for row in rows:
             member = guild.get_member(row['discord_id'])
             if not member:
                 continue
 
-            # Проверяем, есть ли у участника хотя бы одна из клановых ролей
+            # Пользователи без клановой/высокой роли автоматической проверке не подлежат
             if not any(role.id in clan_role_ids for role in member.roles):
                 continue
 
             info = await stalcraft.get_player_info(row['game_nick'], region=row['region'])
-            if info:
-                text_changes, actions = await utils.apply_clan_status(member, info, cfg, dry_run=True)
-                all_text_changes.extend(text_changes)
-                all_actions.extend(actions)
+            if not info:
+                continue
+
+            player_clan = (info.get('clan') or {}).get('name', '').lower()
+            valid_clans = {str(cfg.get('CLAN1_NAME', '')).lower(), str(cfg.get('CLAN2_NAME', '')).lower()}
+            valid_clans.discard('')
+            if player_clan not in valid_clans:
+                not_found_in_clans.append(member.mention)
+
+            text_changes, actions = await utils.apply_clan_status(member, info, cfg, dry_run=True)
+            all_text_changes.extend(text_changes)
+            all_actions.extend(actions)
 
         if all_text_changes:
-            pending_clan_changes[guild.id] = (all_text_changes, all_actions)
+            log_channel_id = cfg.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID') or cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID')
+            pending_clan_changes[guild.id] = {
+                'text_changes': all_text_changes,
+                'actions': all_actions,
+                'not_found': not_found_in_clans,
+                'log_channel_id': log_channel_id,
+            }
             embed = discord.Embed(
                 title="📋 Результаты проверки кланов (требуется подтверждение)",
                 description="\n".join(all_text_changes[:20]) + ("\n..." if len(all_text_changes) > 20 else ""),
@@ -267,9 +332,10 @@ async def clan_check_loop():
             embed.set_footer(text="Нажмите Подтвердить, чтобы применить изменения, или Отмена для отмены.")
 
             view = ConfirmClanChangesView(guild.id)
-            log_channel = guild.get_channel(cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
+            log_channel = guild.get_channel(cfg.get('AUTO_CLAN_CHECK_LOG_CHANNEL_ID') or cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
             if log_channel:
-                await log_channel.send(embed=embed, view=view)
+                msg = await log_channel.send(embed=embed, view=view)
+                view.message = msg
             else:
                 logger.send_tg_log(f"⚠️ Не найден канал логов для сервера {guild.name}")
 
@@ -310,6 +376,11 @@ async def before_backup():
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    # Бот не обрабатывает личные сообщения
+    if message.guild is None:
+        return
+
     await db.update_user_last_seen(message.author.id, message.author.display_name)
     if config.MODERATION_ENABLED:
         cfg = await config_manager.get_config(message.guild.id)
@@ -389,20 +460,6 @@ async def on_member_update(before, after):
             timestamp=datetime.datetime.now(timezone.utc)
         )
         await utils.send_user_log(after.guild, embed_log, cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
-
-        link = await db.get_game_link(after.id)
-        if link:
-            info = await stalcraft.get_player_info(link['game_nick'], region=link['region'])
-            if info:
-                text_changes, actions = await utils.apply_clan_status(after, info, cfg, dry_run=False)  # применяем сразу
-                if text_changes:
-                    embed_clan = discord.Embed(
-                        title="➕ Автоматическое обновление при выдаче роли",
-                        description="\n".join(text_changes),
-                        color=discord.Color.blue(),
-                        timestamp=datetime.datetime.now(timezone.utc)
-                    )
-                    await utils.send_user_log(after.guild, embed_clan, cfg.get('MEMBER_CHANGE_LOG_CHANNEL_ID'))
 
     removed_clan_roles = set(cfg.get('CLAN1_MEMBER_ROLE_IDS', []) + cfg.get('CLAN2_MEMBER_ROLE_IDS', [])) & (before_role_ids - after_role_ids)
     if removed_clan_roles:

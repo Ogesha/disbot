@@ -12,15 +12,7 @@ async def cmd_pay(interaction: discord.Interaction, пользователь: di
     # Получаем конфиг гильдии
     cfg = await config_manager.get_config(interaction.guild_id)
 
-    # Проверяем, что команда вызвана в одном из клановых каналов
-    clan1_channel = cfg.get('CLAN1_COMMAND_CHANNEL_ID')
-    clan2_channel = cfg.get('CLAN2_COMMAND_CHANNEL_ID')
-    if interaction.channel_id not in (clan1_channel, clan2_channel):
-        await interaction.response.send_message("Эта команда недоступна в этом канале.", ephemeral=True)
-        return
-
-    # Проверяем права (роль из ALLOWED_ROLE_IDS) и канал (передаём clan_channel_id)
-    if not await utils.check_permissions(interaction, cfg, clan_channel_id=interaction.channel_id):
+    if not await utils.check_permissions(interaction, cfg, command_name="оплата"):
         return
 
     fines = await db.get_active_fines(пользователь.id)
